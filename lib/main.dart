@@ -13,7 +13,14 @@ class MainApp extends StatelessWidget {
     return const MaterialApp(
       home: Scaffold(
         body: Center(
-          child: Tile('A', HitType.hit),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Tile('A', HitType.hit),
+              Tile('B', HitType.partial),
+              Tile('C', HitType.miss)
+            ],
+          ),
         ),
       ),
     );
@@ -40,6 +47,12 @@ class Tile extends StatelessWidget{
           HitType.miss => Colors.grey,
           _ => Colors.white
       }
+      ),
+      child: Center(
+        child: Text(
+          letter.toUpperCase(),
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
       ),
     );
   }
