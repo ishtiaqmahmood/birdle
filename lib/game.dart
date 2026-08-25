@@ -109,9 +109,10 @@ class Game {
 
   /// Whether the most recent guess matches the hidden word.
   bool get didWin {
-    if (_guesses.first.isEmpty) return false;
+    final prev = previousGuess;
+    if (prev.isEmpty) return false;
 
-    for (final letter in previousGuess) {
+    for (final letter in prev) {
       if (letter.type != HitType.hit) return false;
     }
 
