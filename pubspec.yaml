@@ -1,7 +1,7 @@
 name: birdle
-description: "A new Flutter project."
+description: "A polished Wordle-inspired word guessing game built with Flutter. Challenge yourself to find the hidden five-letter word in six attempts or less!"
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ^3.11.0
