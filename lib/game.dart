@@ -10,6 +10,9 @@
 /// - Configurable maximum guesses
 /// - Complete game state tracking (wins, losses, streaks)
 /// - Guess evaluation with hit, partial, and miss feedback
+/// - Multiple word lengths (4, 5, 6 letters)
+/// - Achievements system
+/// - Timed mode support
 ///
 /// ## Example
 /// ```dart
@@ -43,6 +46,56 @@ enum HitType {
   /// The letter doesn't appear in the hidden word.
   /// Displayed with gray color in the UI.
   miss,
+}
+
+/// Achievement types that players can unlock.
+enum AchievementType {
+  /// First game won
+  firstWin('First Win', '🏆', 'Win your first game'),
+  /// Won 10 games
+  tenWins('Ten Wins', '🌟', 'Win 10 games'),
+  /// Won 50 games
+  fiftyWins('Fifty Wins', '💎', 'Win 50 games'),
+  /// Won 100 games
+  hundredWins('Century', '👑', 'Win 100 games'),
+  /// Perfect game (won in minimum guesses)
+  perfectGame('Perfect', '✨', 'Win in the minimum number of guesses'),
+  /// Streak of 5 wins
+  hotStreak('Hot Streak', '🔥', 'Win 5 games in a row'),
+  /// Hard mode win
+  hardModeWin('Hardcore', '💪', 'Win a game in Hard Mode'),
+  /// Timed mode win
+  speedDemon('Speed Demon', '⚡', 'Win a game in Timed Mode');
+
+  const AchievementType(this.displayName, this.emoji, this.description);
+  final String displayName;
+  final String emoji;
+  final String description;
+}
+
+/// Represents an unlocked achievement with timestamp.
+class UnlockedAchievement {
+  const UnlockedAchievement({
+    required this.type,
+    required this.unlockedAt,
+  });
+
+  final AchievementType type;
+  final DateTime unlockedAt;
+
+  Map<String, dynamic> toJson() => {
+    'type': type.name,
+    'unlockedAt': unlockedAt.toIso8601String(),
+  };
+
+  factory UnlockedAchievement.fromJson(Map<String, dynamic> json) {
+    return UnlockedAchievement(
+      type: AchievementType.values.firstWhere(
+        (e) => e.name == json['type'],
+      ),
+      unlockedAt: DateTime.parse(json['unlockedAt']),
+    );
+  }
 }
 
 /// A single character paired with its [HitType] against the hidden word.
@@ -2392,9 +2445,17 @@ class Game {
   /// If [seed] is provided, the hidden word is
   /// chosen deterministically from [legalWords],
   /// otherwise it is selected at random.
-  Game({this.maxGuesses = defaultMaxGuesses, this.seed})
-    : _wordToGuess = _generateInitialWord(seed),
-      _guesses = List<Word>.filled(maxGuesses, Word.empty());
+  /// 
+  /// If [timedMode] is true, the game will track elapsed time.
+  /// If [hardModeEnabled] is true, hard mode rules apply.
+  Game({
+    this.maxGuesses = defaultMaxGuesses, 
+    this.seed,
+    this.timedMode = false,
+    this.hardModeEnabled = false,
+  })  : _wordToGuess = _generateInitialWord(seed),
+        _guesses = List<Word>.filled(maxGuesses, Word.empty()),
+        _startTime = timedMode ? DateTime.now() : null;
 
   /// The maximum number of guesses allowed in this game.
   final int maxGuesses;
@@ -2402,6 +2463,12 @@ class Game {
   /// The seed used to choose the hidden word,
   /// or `null` if it was selected at random.
   final int? seed;
+
+  /// Whether timed mode is enabled for this game.
+  final bool timedMode;
+
+  /// Whether hard mode is enabled for this game.
+  final bool hardModeEnabled;
 
   /// The current hidden word, exposed publicly through [hiddenWord].
   Word _wordToGuess;
@@ -2411,6 +2478,9 @@ class Game {
   /// Holds every guess slot in order,
   /// with unfilled slots represented by empty [Word]s.
   List<Word> _guesses;
+
+  /// The time when the game started, or null if not in timed mode.
+  final DateTime? _startTime;
 
   /// The word the player is trying to guess.
   Word get hiddenWord => _wordToGuess;
@@ -2432,6 +2502,20 @@ class Game {
   int get guessesRemaining {
     if (activeIndex == -1) return 0;
     return maxGuesses - activeIndex;
+  }
+
+  /// Elapsed time since game start in seconds (only in timed mode).
+  int get elapsedTimeSeconds {
+    if (!timedMode || _startTime == null) return 0;
+    return DateTime.now().difference(_startTime!).inSeconds;
+  }
+
+  /// Elapsed time formatted as MM:SS (only in timed mode).
+  String get elapsedTimeFormatted {
+    final seconds = elapsedTimeSeconds;
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
   /// Whether the most recent guess matches the hidden word.
@@ -2611,5 +2695,165 @@ extension WordUtils on Word {
     }
 
     return Word(result);
+  }
+}
+
+/// Manages player achievements and statistics.
+class AchievementManager {
+  AchievementManager({
+    this.totalWins = 0,
+    this.totalGamesPlayed = 0,
+    this.currentStreak = 0,
+    this.maxStreak = 0,
+    List<UnlockedAchievement>? unlockedAchievements,
+  }) : unlockedAchievements = unlockedAchievements ?? [];
+
+  /// Total number of games won across all sessions.
+  int totalWins;
+
+  /// Total number of games played across all sessions.
+  int totalGamesPlayed;
+
+  /// Current win streak.
+  int currentStreak;
+
+  /// Maximum win streak achieved.
+  int maxStreak;
+
+  /// List of achievements that have been unlocked.
+  List<UnlockedAchievement> unlockedAchievements;
+
+  /// Map of achievement types to their unlock status.
+  Set<String> get _unlockedAchievementNames => 
+    unlockedAchievements.map((a) => a.type.name).toSet();
+
+  /// Records a game win and checks for new achievements.
+  /// Returns a list of newly unlocked achievements.
+  List<UnlockedAchievement> recordWin({
+    required int guessesUsed,
+    required bool hardMode,
+    required bool timedMode,
+    int? maxGuesses,
+  }) {
+    totalWins++;
+    totalGamesPlayed++;
+    currentStreak++;
+    if (currentStreak > maxStreak) {
+      maxStreak = currentStreak;
+    }
+
+    final newAchievements = <UnlockedAchievement>[];
+    final now = DateTime.now();
+
+    // Check first win
+    if (totalWins == 1 && !_unlockedAchievementNames.contains('firstWin')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.firstWin,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check 10 wins
+    if (totalWins >= 10 && !_unlockedAchievementNames.contains('tenWins')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.tenWins,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check 50 wins
+    if (totalWins >= 50 && !_unlockedAchievementNames.contains('fiftyWins')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.fiftyWins,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check 100 wins
+    if (totalWins >= 100 && !_unlockedAchievementNames.contains('hundredWins')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.hundredWins,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check perfect game (won in minimum guesses)
+    if (maxGuesses != null && guessesUsed == 1 && 
+        !_unlockedAchievementNames.contains('perfectGame')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.perfectGame,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check hot streak (5 in a row)
+    if (currentStreak >= 5 && !_unlockedAchievementNames.contains('hotStreak')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.hotStreak,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check hard mode win
+    if (hardMode && !_unlockedAchievementNames.contains('hardModeWin')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.hardModeWin,
+        unlockedAt: now,
+      ));
+    }
+
+    // Check timed mode win
+    if (timedMode && !_unlockedAchievementNames.contains('speedDemon')) {
+      newAchievements.add(UnlockedAchievement(
+        type: AchievementType.speedDemon,
+        unlockedAt: now,
+      ));
+    }
+
+    unlockedAchievements.addAll(newAchievements);
+    return newAchievements;
+  }
+
+  /// Records a game loss.
+  void recordLoss() {
+    totalGamesPlayed++;
+    currentStreak = 0;
+  }
+
+  /// Resets all statistics and achievements.
+  void reset() {
+    totalWins = 0;
+    totalGamesPlayed = 0;
+    currentStreak = 0;
+    maxStreak = 0;
+    unlockedAchievements.clear();
+  }
+
+  /// Converts stats to JSON for persistence.
+  Map<String, dynamic> toJson() => {
+    'totalWins': totalWins,
+    'totalGamesPlayed': totalGamesPlayed,
+    'currentStreak': currentStreak,
+    'maxStreak': maxStreak,
+    'unlockedAchievements': unlockedAchievements.map((a) => a.toJson()).toList(),
+  };
+
+  /// Creates an AchievementManager from JSON.
+  factory AchievementManager.fromJson(Map<String, dynamic> json) {
+    return AchievementManager(
+      totalWins: json['totalWins'] ?? 0,
+      totalGamesPlayed: json['totalGamesPlayed'] ?? 0,
+      currentStreak: json['currentStreak'] ?? 0,
+      maxStreak: json['maxStreak'] ?? 0,
+      unlockedAchievements: (json['unlockedAchievements'] as List?)
+          ?.map((a) => UnlockedAchievement.fromJson(a))
+          .toList(),
+    );
+  }
+
+  /// Win percentage.
+  double get winPercentage {
+    if (totalGamesPlayed == 0) return 0.0;
+    return (totalWins / totalGamesPlayed) * 100;
   }
 }

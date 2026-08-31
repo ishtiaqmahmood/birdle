@@ -18,7 +18,9 @@ class MainApp extends StatefulWidget {
 class _MainAppState extends State<MainApp> {
   ThemeMode _themeMode = ThemeMode.system;
   bool _hardMode = false;
+  bool _timedMode = false;
   int _dailySeed = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  AchievementManager _achievementManager = AchievementManager();
 
   void _toggleTheme() {
     setState(() {
@@ -30,6 +32,21 @@ class _MainAppState extends State<MainApp> {
     setState(() {
       _hardMode = value;
     });
+  }
+
+  void _setTimedMode(bool value) {
+    setState(() {
+      _timedMode = value;
+    });
+  }
+
+  void _loadAchievements() {
+    // In a real app, load from persistent storage
+    // For now, using default initialized state
+  }
+
+  void _saveAchievements() {
+    // In a real app, save to persistent storage using shared_preferences
   }
 
   @override
@@ -52,7 +69,11 @@ class _MainAppState extends State<MainApp> {
         onThemeToggle: _toggleTheme,
         hardMode: _hardMode,
         onHardModeChanged: _setHardMode,
+        timedMode: _timedMode,
+        onTimedModeChanged: _setTimedMode,
         dailySeed: _dailySeed,
+        achievementManager: _achievementManager,
+        onSaveAchievements: _saveAchievements,
       ),
     );
   }
@@ -128,14 +149,22 @@ class GamePage extends StatefulWidget {
   final VoidCallback onThemeToggle;
   final bool hardMode;
   final ValueChanged<bool> onHardModeChanged;
+  final bool timedMode;
+  final ValueChanged<bool> onTimedModeChanged;
   final int dailySeed;
+  final AchievementManager achievementManager;
+  final VoidCallback onSaveAchievements;
 
   const GamePage({
     super.key,
     required this.onThemeToggle,
     required this.hardMode,
     required this.onHardModeChanged,
+    required this.timedMode,
+    required this.onTimedModeChanged,
     required this.dailySeed,
+    required this.achievementManager,
+    required this.onSaveAchievements,
   });
 
   @override
@@ -167,7 +196,11 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _game = Game(seed: widget.dailySeed % legalWords.length);
+    _game = Game(
+      seed: widget.dailySeed % legalWords.length,
+      hardModeEnabled: widget.hardMode,
+      timedMode: widget.timedMode,
+    );
     _shakeController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -203,7 +236,11 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   void _resetGame() {
     setState(() {
-      _game = Game(seed: Random().nextInt(legalWords.length));
+      _game = Game(
+        seed: Random().nextInt(legalWords.length),
+        hardModeEnabled: widget.hardMode,
+        timedMode: widget.timedMode,
+      );
       _currentInput = '';
       _animatingRows.clear();
     });
@@ -211,7 +248,11 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   void _playDaily() {
     setState(() {
-      _game = Game(seed: widget.dailySeed % legalWords.length);
+      _game = Game(
+        seed: widget.dailySeed % legalWords.length,
+        hardModeEnabled: widget.hardMode,
+        timedMode: widget.timedMode,
+      );
       _currentInput = '';
       _animatingRows.clear();
     });
@@ -293,15 +334,38 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     _bounceController.forward(from: 0);
 
     if (_game.didWin) {
+      final guessesUsed = _game.activeIndex + 1;
+      // Record win in achievement manager
+      final newAchievements = widget.achievementManager.recordWin(
+        guessesUsed: guessesUsed,
+        hardMode: widget.hardMode,
+        timedMode: widget.timedMode,
+        maxGuesses: _game.maxGuesses,
+      );
+      
       _gamesWon++;
       _streak++;
       if (_streak > _maxStreak) _maxStreak = _streak;
-      _guessDistribution[_game.activeIndex + 1] = 
-        (_guessDistribution[_game.activeIndex + 1] ?? 0) + 1;
+      _guessDistribution[guessesUsed] = 
+        (_guessDistribution[guessesUsed] ?? 0) + 1;
       _gamesPlayed++;
       _saveStats();
-      _showEndDialog(title: 'You Won! 🎉', message: 'Great job guessing the word!');
+      widget.onSaveAchievements();
+      
+      String message = 'Great job guessing the word!';
+      if (widget.timedMode) {
+        message += '\nTime: ${_game.elapsedTimeFormatted}';
+      }
+      if (newAchievements.isNotEmpty) {
+        message += '\n\n🏆 New Achievement${newAchievements.length > 1 ? 's' : ''}:';
+        for (final achievement in newAchievements) {
+          message += '\n${achievement.type.emoji} ${achievement.type.displayName}';
+        }
+      }
+      _showEndDialog(title: 'You Won! 🎉', message: message);
     } else if (_game.didLose) {
+      widget.achievementManager.recordLoss();
+      widget.onSaveAchievements();
       _streak = 0;
       _gamesPlayed++;
       _saveStats();
