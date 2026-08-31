@@ -1,58 +1,32 @@
 ```
-# Dependencies
-.pub/
-.buildlog
-.packages
+# Dart/Flutter build artifacts
+.dart_tool/
+.build/
+bin/
 
-# Generated code
-*.g.dart
-*.freezed.dart
+# Dependencies
+.packages
+.pub-cache/
+.pub/
+dependencies/
 
 # Logs
 *.log
 **/logs
 
-# Environment
+# Environment variables
 .env
 .env.local
-*.env.*
+.env.*
+!.env.example
 
-# IDE
+# IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# OS
+# OS generated files
 .DS_Store
 Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
 ```
