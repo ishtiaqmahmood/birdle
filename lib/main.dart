@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'game.dart';
+import 'storage_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await StorageService().init();
   runApp(const MainApp());
 }
 
@@ -19,34 +24,85 @@ class _MainAppState extends State<MainApp> {
   ThemeMode _themeMode = ThemeMode.system;
   bool _hardMode = false;
   bool _timedMode = false;
+  int _wordLength = 5;
   int _dailySeed = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   AchievementManager _achievementManager = AchievementManager();
+  GameStats _stats = GameStats();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+    _loadStats();
+    _loadAchievements();
+  }
+
+  void _loadSettings() {
+    final storage = StorageService();
+    setState(() {
+      _themeMode = ThemeMode.values[storage.getThemeMode()];
+      _hardMode = storage.getHardMode();
+      _timedMode = storage.getTimedMode();
+      _wordLength = storage.getWordLength();
+    });
+  }
+
+  void _saveSettings() {
+    final storage = StorageService();
+    storage.setThemeMode(_themeMode.index);
+    storage.setHardMode(_hardMode);
+    storage.setTimedMode(_timedMode);
+    storage.setWordLength(_wordLength);
+  }
 
   void _toggleTheme() {
     setState(() {
       _themeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     });
+    _saveSettings();
   }
 
   void _setHardMode(bool value) {
     setState(() {
       _hardMode = value;
     });
+    _saveSettings();
   }
 
   void _setTimedMode(bool value) {
     setState(() {
       _timedMode = value;
     });
+    _saveSettings();
+  }
+
+  void _setWordLength(int value) {
+    setState(() {
+      _wordLength = value;
+    });
+    _saveSettings();
+  }
+
+  void _loadStats() {
+    setState(() {
+      _stats = StorageService().getStats();
+      _achievementManager = AchievementManager.fromJson({
+        'totalWins': _stats.gamesWon,
+        'totalGamesPlayed': _stats.gamesPlayed,
+        'currentStreak': _stats.currentStreak,
+        'maxStreak': _stats.maxStreak,
+        'unlockedAchievements': StorageService().getAchievements().map((a) => a.toJson()).toList(),
+      });
+    });
+  }
+
+  void _saveStats() {
+    StorageService().saveStats(_stats);
+    StorageService().saveAchievements(_achievementManager.unlockedAchievements);
   }
 
   void _loadAchievements() {
-    // In a real app, load from persistent storage
-    // For now, using default initialized state
-  }
-
-  void _saveAchievements() {
-    // In a real app, save to persistent storage using shared_preferences
+    // Already loaded in _loadStats
   }
 
   @override
@@ -73,18 +129,21 @@ class _MainAppState extends State<MainApp> {
         onTimedModeChanged: _setTimedMode,
         dailySeed: _dailySeed,
         achievementManager: _achievementManager,
-        onSaveAchievements: _saveAchievements,
+        onSaveAchievements: _saveStats,
+        wordLength: _wordLength,
+        stats: _stats,
       ),
     );
   }
 }
 
 class Tile extends StatelessWidget {
-  const Tile(this.letter, this.hitType, {super.key, this.isCurrentInput = false});
+  const Tile(this.letter, this.hitType, {super.key, this.isCurrentInput = false, this.animate = false});
 
   final String letter;
   final HitType hitType;
   final bool isCurrentInput;
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +182,7 @@ class Tile extends StatelessWidget {
         break;
     }
 
-    return Container(
+    Widget tile = Container(
       width: 52,
       height: 52,
       decoration: BoxDecoration(
@@ -142,6 +201,18 @@ class Tile extends StatelessWidget {
         ),
       ),
     );
+
+    if (animate && hitType != HitType.none) {
+      tile = tile
+          .animate(
+            onPlay: (controller) => controller.repeat(),
+          )
+          .scale(duration: 400.ms, curve: Curves.easeOutBack)
+          .then()
+          .flipH(duration: 300.ms);
+    }
+
+    return tile;
   }
 }
 
@@ -154,6 +225,8 @@ class GamePage extends StatefulWidget {
   final int dailySeed;
   final AchievementManager achievementManager;
   final VoidCallback onSaveAchievements;
+  final int wordLength;
+  final GameStats stats;
 
   const GamePage({
     super.key,
@@ -165,6 +238,8 @@ class GamePage extends StatefulWidget {
     required this.dailySeed,
     required this.achievementManager,
     required this.onSaveAchievements,
+    required this.wordLength,
+    required this.stats,
   });
 
   @override
@@ -178,10 +253,14 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool _showSettings = false;
   bool _showHelp = false;
   bool _showStats = false;
+  bool _showHistory = false;
   int _streak = 0;
   int _gamesPlayed = 0;
   int _gamesWon = 0;
   int _maxStreak = 0;
+  int _xp = 0;
+  int _level = 1;
+  int _combo = 0;
   Map<int, int> _guessDistribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0};
   late AnimationController _shakeController;
   late AnimationController _bounceController;
@@ -196,6 +275,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _loadStatsFromWidget();
     _game = Game(
       seed: widget.dailySeed % legalWords.length,
       hardModeEnabled: widget.hardMode,
@@ -209,7 +289,19 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 600),
       vsync: this,
     );
-    _loadStats();
+  }
+
+  void _loadStatsFromWidget() {
+    setState(() {
+      _streak = widget.stats.currentStreak;
+      _gamesPlayed = widget.stats.gamesPlayed;
+      _gamesWon = widget.stats.gamesWon;
+      _maxStreak = widget.stats.maxStreak;
+      _guessDistribution = Map<int, int>.from(widget.stats.guessDistribution);
+      _xp = StorageService().getXp();
+      _level = StorageService().getLevel();
+      _combo = StorageService().getCombo();
+    });
   }
 
   @override
@@ -218,20 +310,6 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     _shakeController.dispose();
     _bounceController.dispose();
     super.dispose();
-  }
-
-  void _loadStats() {
-    setState(() {
-      _streak = 0;
-      _gamesPlayed = 0;
-      _gamesWon = 0;
-      _maxStreak = 0;
-      _guessDistribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0};
-    });
-  }
-
-  void _saveStats() {
-    // Stats would be persisted in a real app using shared_preferences
   }
 
   void _resetGame() {
@@ -279,7 +357,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void _submitGuess() {
-    if (_currentInput.length < 5) {
+    final wordLength = widget.wordLength;
+    if (_currentInput.length < wordLength) {
       _showMessage('Not enough letters');
       _shakeController.forward(from: 0);
       return;
@@ -316,7 +395,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         }
       }
       
-      for (var i = 0; i < 5; i++) {
+      for (var i = 0; i < wordLength; i++) {
         if (previous[i].type == HitType.hit && _currentInput[i] != previous[i].char) {
           _showMessage('Must keep correct letters in place');
           _shakeController.forward(from: 0);
@@ -349,7 +428,19 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       _guessDistribution[guessesUsed] = 
         (_guessDistribution[guessesUsed] ?? 0) + 1;
       _gamesPlayed++;
-      _saveStats();
+      
+      // Update combo and XP
+      _combo++;
+      final xpGained = _calculateXp(guessesUsed, widget.hardMode, widget.timedMode);
+      _xp += xpGained;
+      final newLevel = (_xp / 100).floor() + 1;
+      if (newLevel > _level) {
+        _showMessage('🎉 Level Up! You are now level $newLevel!');
+      }
+      _level = newLevel;
+      
+      // Save to storage
+      _saveGameResult(guessesUsed, true);
       widget.onSaveAchievements();
       
       String message = 'Great job guessing the word!';
@@ -362,18 +453,68 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           message += '\n${achievement.type.emoji} ${achievement.type.displayName}';
         }
       }
-      _showEndDialog(title: 'You Won! 🎉', message: message);
+      message += '\n\nXP Earned: +$xpGained | Combo: x$_combo';
+      _showEndDialog(title: 'You Won! 🎉', message: message, canShare: true);
     } else if (_game.didLose) {
       widget.achievementManager.recordLoss();
       widget.onSaveAchievements();
       _streak = 0;
+      _combo = 0;
       _gamesPlayed++;
-      _saveStats();
+      _saveGameResult(_game.maxGuesses, false);
       _showEndDialog(
         title: 'Game Over 😔',
         message: 'The word was: ${_game.hiddenWord.toString().toUpperCase()}',
+        canShare: true,
       );
     }
+  }
+
+  int _calculateXp(int guessesUsed, bool hardMode, bool timedMode) {
+    int xp = 0;
+    // Base XP: fewer guesses = more XP
+    switch (guessesUsed) {
+      case 1: xp = 50; break;
+      case 2: xp = 40; break;
+      case 3: xp = 30; break;
+      case 4: xp = 20; break;
+      case 5: xp = 15; break;
+      default: xp = 10; break;
+    }
+    // Bonus for hard mode
+    if (hardMode) xp += 20;
+    // Bonus for timed mode
+    if (timedMode) xp += 15;
+    // Combo bonus
+    xp += (_combo * 2);
+    return xp;
+  }
+
+  void _saveGameResult(int guessesUsed, bool won) {
+    final storage = StorageService();
+    final stats = GameStats(
+      gamesPlayed: _gamesPlayed,
+      gamesWon: _gamesWon,
+      currentStreak: _streak,
+      maxStreak: _maxStreak,
+      guessDistribution: _guessDistribution,
+    );
+    storage.saveStats(stats);
+    storage.setXp(_xp);
+    storage.setLevel(_level);
+    storage.setCombo(_combo);
+    
+    // Add to history
+    storage.addToHistory(GameHistoryEntry(
+      date: DateTime.now(),
+      word: _game.hiddenWord.toString().toUpperCase(),
+      guesses: guessesUsed,
+      won: won,
+      wordLength: widget.wordLength,
+      hardMode: widget.hardMode,
+      timedMode: widget.timedMode,
+      timeSeconds: widget.timedMode ? _game.elapsedTimeSeconds : 0,
+    ));
   }
 
   void _showMessage(String msg) {
@@ -388,7 +529,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     );
   }
 
-  void _showEndDialog({required String title, required String message}) {
+  void _showEndDialog({required String title, required String message, bool canShare = false}) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -397,6 +538,12 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         content: Text(message, textAlign: TextAlign.center),
         actionsAlignment: MainAxisAlignment.center,
         actions: [
+          if (canShare)
+            ElevatedButton.icon(
+              onPressed: () => _shareResults(),
+              icon: const Icon(Icons.share),
+              label: const Text('Share'),
+            ),
           ElevatedButton(
             onPressed: () {
               Navigator.of(context).pop();
@@ -407,6 +554,45 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Future<void> _shareResults() async {
+    final emojiGrid = _generateEmojiGrid();
+    final shareText = '''
+Birdle ${widget.wordLength} Letter - ${_game.didWin ? 'Won' : 'Lost'}!
+
+$emojiGrid
+
+${_game.didWin ? 'Guessed in ${_game.activeIndex + 1}/${_game.maxGuesses}' : 'The word was: ${_game.hiddenWord.toString().toUpperCase()}'}
+
+#Birdle #WordGame
+''';
+    
+    await Share.share(shareText);
+  }
+
+  String _generateEmojiGrid() {
+    final sb = StringBuffer();
+    for (final word in _game.guesses) {
+      if (word.isEmpty) continue;
+      for (final letter in word) {
+        switch (letter.type) {
+          case HitType.hit:
+            sb.write('🟩');
+            break;
+          case HitType.partial:
+            sb.write('🟨');
+            break;
+          case HitType.miss:
+            sb.write('⬜');
+            break;
+          case HitType.none:
+            break;
+        }
+      }
+      sb.write('\n');
+    }
+    return sb.toString().trim();
   }
 
   Map<String, HitType> _getKeyHitTypes() {
