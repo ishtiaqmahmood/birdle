@@ -86,13 +86,14 @@ class _MainAppState extends State<MainApp> {
   void _loadStats() {
     setState(() {
       _stats = StorageService().getStats();
-      _achievementManager = AchievementManager.fromJson({
-        'totalWins': _stats.gamesWon,
-        'totalGamesPlayed': _stats.gamesPlayed,
-        'currentStreak': _stats.currentStreak,
-        'maxStreak': _stats.maxStreak,
-        'unlockedAchievements': StorageService().getAchievements().map((a) => a.toJson()).toList(),
-      });
+      final achievements = StorageService().getAchievements();
+      _achievementManager = AchievementManager(
+        totalWins: _stats.gamesWon,
+        totalGamesPlayed: _stats.gamesPlayed,
+        currentStreak: _stats.currentStreak,
+        maxStreak: _stats.maxStreak,
+        unlockedAchievements: achievements,
+      );
     });
   }
 
@@ -348,7 +349,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         });
       }
     } else if (RegExp(r'^[A-Za-z]$').hasMatch(key)) {
-      if (_currentInput.length < 5) {
+      if (_currentInput.length < widget.wordLength) {
         setState(() {
           _currentInput += key.toLowerCase();
         });
@@ -694,7 +695,7 @@ ${_game.didWin ? 'Guessed in ${_game.activeIndex + 1}/${_game.maxGuesses}' : 'Th
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(5, (colIndex) {
+                            children: List.generate(widget.wordLength, (colIndex) {
                               String letter = '';
                               HitType hitType = HitType.none;
 
@@ -716,7 +717,7 @@ ${_game.didWin ? 'Guessed in ${_game.activeIndex + 1}/${_game.maxGuesses}' : 'Th
                                   }
                                   return Transform.translate(
                                     offset: Offset(shakeOffset, 0),
-                                    child: child!,
+                                    child: child ?? Container(),
                                   );
                                 },
                                 child: Padding(
@@ -1081,7 +1082,7 @@ ${_game.didWin ? 'Guessed in ${_game.activeIndex + 1}/${_game.maxGuesses}' : 'Th
                               padding: const EdgeInsets.symmetric(vertical: 4.0),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
-                                children: List.generate(5, (colIndex) {
+                                children: List.generate(widget.wordLength, (colIndex) {
                                   String letter = '';
                                   HitType hitType = HitType.none;
 
@@ -1103,7 +1104,7 @@ ${_game.didWin ? 'Guessed in ${_game.activeIndex + 1}/${_game.maxGuesses}' : 'Th
                                       }
                                       return Transform.translate(
                                         offset: Offset(shakeOffset, 0),
-                                        child: child!,
+                                        child: child ?? Container(),
                                       );
                                     },
                                     child: Padding(
