@@ -2656,8 +2656,6 @@ extension WordUtils on Word {
   /// but where each [Letter] has new a [HitType] of
   /// [HitType.hit], [HitType.partial], or [HitType.miss].
   Word evaluateGuess(Word hiddenWord) {
-    assert(isLegalGuess);
-
     final result = List<Letter>.filled(length, (char: '', type: HitType.none));
     // Counts hidden-word letters that can still be claimed as partial matches.
     final unmatchedHiddenLetterCounts = <String, int>{};
